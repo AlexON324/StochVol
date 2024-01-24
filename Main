@@ -1,0 +1,91 @@
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from plotExporter import PlotExporter
+from localLevelModel_StochVol import localLevelModel_StochVol
+from llmOptimizer_StochVol import LlmOptimizer
+
+##### User Settings #####
+# Paths
+working_Dir = "C:/Users/aoneill/Desktop/EDU Python/Time Series"
+folderPath_Data = "./Data"
+folderPath_Output = "./Output/StochVol"
+filePath = folderPath_Data + "/sv.dat"
+
+# Local Level Model
+a1 = 0
+P1 = 10000000
+sigE = (np.pi**2)/2
+sigN = 0.1
+omega = - 0.1
+phi = 1
+meanAdj = -1.27
+calculateConfidenceBounds = False
+confidenceLevel = 0.9
+
+# Optimization
+optimize = True
+method = 'BFGS'
+options = {'eps':1e-06, 'disp': True, 'maxiter':1000}
+absoluteSigma=False
+verbose=True
+
+# Other Settings
+exportFigures = True
+showFigures = True
+
+##### Start of Code #####
+# Setup
+os.chdir(working_Dir)
+os.makedirs(folderPath_Output, exist_ok=True)
+plotExporter = PlotExporter(folderPath_Output, exportFigures, showFigures)
+
+# Read Data
+y = pd.read_csv(filePath, header=0, names=["y"])
+y.index = range(0, len(y), 1)
+
+##Calculates x_t for use in kalman filter
+x_t =  np.log(np.power((y["y"]-np.mean(y["y"])) * 0.01,2)) - meanAdj
+x_tDf = pd.DataFrame({"y":x_t})
+x_tDf.index = y.index
+
+# Export results
+yName = "01-10-1981 - 28-06-1985 - GBP-USD Exchange Rates"
+xLabel = "Date"
+yLabel = "Demeaned Log GBP-USD Exchange rates"
+plotExporter.CreateInitialPlot(x_tDf, yName, xLabel, yLabel)
+
+# Create local level model
+if optimize:
+    llmOptimizer = LlmOptimizer(a1, P1, sigE, absoluteSigma, verbose)
+    llmOptimized = llmOptimizer.ReturnOptimizedLlm((omega, phi, sigN), x_tDf, method, options)
+else:
+    omega = -0.17829829
+    phi = 0.98251658
+    sigN = 0.1060109
+    llmOptimized = localLevelModel_StochVol(a1, P1, sigE, omega, phi, sigN, meanAdj)
+
+if calculateConfidenceBounds:
+    llmOptimized.calculateConfidenceBounds = True
+    llmOptimized.confidenceLevel = 0.9
+
+allResults = llmOptimized.CalculateIntermediates(x_tDf)
+
+#14.5.1
+# Check that means match
+print(np.mean(allResults["alphaHat"]))
+print(np.mean(allResults[["y"]]))
+
+# #Plot
+# plt.plot(allResults["alphaHat"]+meanAdj,  color='blue',linewidth=2.0)
+# plt.scatter(allResults.index, allResults[["y"]]+meanAdj, color='grey', label='input data',s=0.5)
+# plt.xlabel("Day")
+# plt.ylabel("GBP - USD Exchange Rate")
+# plt.legend()
+# plt.title("01-10-1981 - 28-06-1985 - Daily Logreturns of Exchange Rates")
+# plotExporter.ProcessPlot(plt, title)
+
+
+
