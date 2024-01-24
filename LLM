@@ -1,0 +1,127 @@
+import numpy as np
+import pandas as pd
+import scipy.stats
+
+class localLevelModel_StochVol:
+    def __init__(self, a1, P1, sigE, omega, phi, sigN, calculateConfidenceBounds=False, confidenceLevel=np.nan):
+         self.a1 = a1
+         self.P1 = P1
+         self.sigE = sigE
+         self.sigN = sigN
+         self.omega = omega
+         self.phi = phi
+         self.calculateConfidenceBounds = calculateConfidenceBounds
+         self.confidenceLevel = confidenceLevel
+
+    def CalculateIntermediates(self, y):
+        kalmanFilterResults = self.CalculateKalmanFilterResults(y)
+        allResults = y.join(kalmanFilterResults)
+
+        smoothedStateVarianceResults = self._CalculateSmoothedStateVariance(allResults)
+        allResults = allResults.join(smoothedStateVarianceResults)
+
+        return allResults
+
+    def CalculateKalmanFilterResults(self, yDf):
+        y = yDf.to_numpy()
+
+        n = len(y)
+        results = np.empty((n, 8))
+        
+        at = self.a1
+        Pt = self.P1
+        atUpperBound = np.nan
+        atLowerBound = np.nan
+        for t in range(n):
+            yt = y[t]
+            
+            Ft = Pt + self.sigE
+
+            if np.isnan(yt):
+                vt = 0
+                Kt = 0
+            else:
+                vt = yt - at
+                Kt = Pt / Ft
+                
+            att = at + (Pt / Ft) * vt
+
+            if self.calculateConfidenceBounds:
+                confidence = self.__mean_confidence_interval(at,Pt,self.confidenceLevel)
+                atUpperBound = confidence[1]
+                atLowerBound = confidence[0]
+
+            #add to results
+            results[t,:] = [at,Pt,vt,Ft,Kt,att,atUpperBound,atLowerBound]
+            
+            #Get next at, Ptt and Pt
+            at = self.phi * att + self.omega
+            
+            Ptt = Pt - (Pt**2)/Ft
+            
+            Pt = (self.phi**2)*Ptt + self.sigN**2
+
+
+        
+        resultsDf = pd.DataFrame(results, columns=["a","P","v","F","K","at","aUpperBound","aLowerBound"])
+        resultsDf.index = yDf.index
+
+        if not self.calculateConfidenceBounds:
+            resultsDf = resultsDf.drop(["aUpperBound","aLowerBound"], axis = 1)
+
+        return resultsDf
+
+    def _CalculateSmoothedStateVariance(self, resultsFromPreviousSteps):
+        n = resultsFromPreviousSteps.shape[0]
+        results = np.empty((n, 6))
+
+        #initialisation
+        rt_1 = 0
+        Nt_1 = 0
+        results[-1,0] = rt_1
+        results[-1,2] = Nt_1
+        alphaHattUpperBound = np.nan
+        alphaHattLowerBound = np.nan
+        for t in range(n-1, -1, -1):
+            index = resultsFromPreviousSteps.index[t]
+            vt = resultsFromPreviousSteps.loc[index,"v"]
+            Ft = resultsFromPreviousSteps.loc[index,"F"]
+            Kt = resultsFromPreviousSteps.loc[index,"K"]
+            at = resultsFromPreviousSteps.loc[index,"a"]
+            Pt = resultsFromPreviousSteps.loc[index,"P"]
+            yt = resultsFromPreviousSteps.loc[index,"y"]
+
+            Lt = 1 - Kt  
+            rt_1 = (vt / Ft) + (Lt * rt_1)
+            
+            alphaHatt = at + (Pt * rt_1)
+            
+
+            if not np.isnan(yt):
+                Nt_1 = (1 / Ft) + ((Lt**2) * Nt_1)
+            Vt = Pt - ((Pt**2) * Nt_1)
+
+            if self.calculateConfidenceBounds:
+                confidence = self.__mean_confidence_interval(alphaHatt,Vt,self.confidenceLevel)
+                alphaHattUpperBound = confidence[1]
+                alphaHattLowerBound = confidence[0]
+
+            #add to results
+            results[t,1] = alphaHatt
+            results[t,3] = Vt
+            results[t,4] = alphaHattUpperBound
+            results[t,5] = alphaHattLowerBound
+            if t-1 >=0:
+                results[t-1,0] = rt_1
+                results[t-1,2] = Nt_1
+
+        resultsDf = pd.DataFrame(results, columns=["r","alphaHat","N","V","alphaHatUpperBound","alphaHatLowerBound"])
+        resultsDf.index = resultsFromPreviousSteps.index
+
+        if not self.calculateConfidenceBounds:
+            resultsDf = resultsDf.drop(["alphaHatUpperBound","alphaHatLowerBound"], axis = 1)
+
+        return resultsDf
+
+    def __mean_confidence_interval(self,mean, variance, confidence):
+        return scipy.stats.norm.interval(confidence, loc=mean, scale=np.sqrt(variance))
