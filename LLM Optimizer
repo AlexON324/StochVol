@@ -1,0 +1,70 @@
+from localLevelModel_StochVol import localLevelModel_StochVol
+from scipy.optimize import minimize
+import pandas as pd
+import numpy as np
+import time
+
+class LlmOptimizer:
+    def __init__(self, a1, P1, sigEps, absoluteSigma=True, verbose=False):
+        self.a1 = a1
+        self.P1 = P1
+        self.sigEps = sigEps
+        self.absoluteSigma = absoluteSigma
+        self.verbose = verbose
+        
+
+    def CalculateLogLikelihood(self,sigmaGuesses, y):
+        #if self.verbose:
+
+        if self.absoluteSigma:
+            
+            omega = abs(sigmaGuesses[0])
+            phi = abs(sigmaGuesses[1])
+            sigEta = abs(sigmaGuesses[2])
+        else:
+            
+            omega = sigmaGuesses[0]
+            phi = sigmaGuesses[1]
+            sigEta = sigmaGuesses[2]
+
+        #if self.verbose:
+        print(str(omega) + ", " + str(phi) + ", " + str(sigEta))
+
+        llm = localLevelModel_StochVol(self.a1, self.P1, self.sigEps, omega, phi, sigEta)
+        kalmanFilterResults = llm.CalculateKalmanFilterResults(y)
+        
+        n = len(kalmanFilterResults[['F']])
+        sumTemp = 0
+        
+        for t in range (0,n,1):
+            F = kalmanFilterResults[['F']].iat[t,0]
+            v = kalmanFilterResults[['v']].iat[t,0]
+                    
+            sumTemp += np.log(F) + (v**2)/F
+        
+        logL = -(n/2)*np.log(2*np.pi) - (1/2)*sumTemp
+        
+        #if self.verbose:
+        print("LogLikelihood:" + str(-logL))
+
+        return -logL
+
+    def OptimizeSigmas(self, guesses, y, method, options):
+        
+        results = minimize(self.CalculateLogLikelihood, x0 = guesses, args = (y), method = method, options = options)
+
+        if self.verbose:
+            print(results)
+
+#        if not results.success:
+#            raise ValueError('Model could not be optimized!')
+            
+        return results
+
+    def ReturnOptimizedLlm(self, guesses, y, method, options):
+        optimizedResults = self.OptimizeSigmas(guesses, y, method, options)
+        optimizedVariances = optimizedResults.x
+
+        optimizedLlm = localLevelModel_StochVol(self.a1, self.P1, self.sigEps, optimizedVariances[0], optimizedVariances[1], optimizedVariances[2])
+
+        return optimizedLlm
